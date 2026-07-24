@@ -32,10 +32,15 @@ struct ContentView: View {
                 .strokeBorder(
                     isTargeted ? Color.accentColor : Color.secondary.opacity(0.35),
                     style: StrokeStyle(lineWidth: 2, dash: [9, 7]))
-            stateContent
-                .padding(24)
-                .multilineTextAlignment(.center)
-                .animation(reduceMotion ? nil : .spring(duration: 0.35), value: model.state)
+            ViewThatFits(in: .vertical) {
+                stateContent
+                ScrollView(.vertical) {
+                    stateContent
+                }
+            }
+            .padding(24)
+            .multilineTextAlignment(.center)
+            .animation(reduceMotion ? nil : .spring(duration: 0.35), value: model.state)
         }
         .padding(16)
         .overlay {
@@ -46,6 +51,14 @@ struct ContentView: View {
         .accessibilityLabel("Ablagebereich für E-Mails")
         .accessibilityValue(accessibilityStateValue)
         .accessibilityHint("Ziehe eine E-Mail aus Apple Mail hierher oder wähle eine .eml-Datei aus, um sie als PDF zu speichern")
+        .onChange(of: model.state) { _, _ in
+            let text = accessibilityStateValue
+            guard !text.isEmpty else { return }
+            NSAccessibility.post(
+                element: NSApp.mainWindow ?? NSApp as Any,
+                notification: .announcementRequested,
+                userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+        }
     }
 
     // MARK: - State-driven center content
@@ -62,10 +75,15 @@ struct ContentView: View {
                 .font(.callout)
             if case .converting = model.state {
                 ProgressView().controlSize(.small)
+                Button("Abbrechen") { model.cancel() }
+                    .keyboardShortcut(.cancelAction)
+                    .padding(.top, 2)
+            } else {
+                Button("Datei auswählen…") { chooseFiles() }
+                    .keyboardShortcut("o", modifiers: .command)
+                    .padding(.top, 2)
             }
             if case .idle = model.state {
-                Button("Datei auswählen…") { chooseFiles() }
-                    .padding(.top, 2)
                 Text(".eml · Nachricht aus Apple Mail")
                     .font(.caption).foregroundStyle(.tertiary)
                     .padding(.top, 2)
@@ -94,6 +112,8 @@ struct ContentView: View {
             }
         case .failed:
             Image(systemName: "xmark.circle.fill").foregroundStyle(Color.red)
+        case .cancelled:
+            Image(systemName: "minus.circle.fill").foregroundStyle(Color.secondary)
         }
     }
 
@@ -103,6 +123,7 @@ struct ContentView: View {
         case .converting: "Wird verarbeitet…"
         case .done: "Gespeichert"
         case .failed: "Fehlgeschlagen"
+        case .cancelled: "Abgebrochen"
         }
     }
 
@@ -119,6 +140,7 @@ struct ContentView: View {
         case .converting(let name): name
         case .done(let name): name
         case .failed(let message): message
+        case .cancelled: "Es wurde kein PDF gespeichert."
         }
     }
 
@@ -140,6 +162,7 @@ struct ContentView: View {
         case .converting: "Verarbeitung läuft"
         case .done: "Erfolgreich gespeichert"
         case .failed(let message): message
+        case .cancelled: "Abgebrochen"
         }
     }
 }

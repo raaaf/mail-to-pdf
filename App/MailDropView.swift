@@ -125,7 +125,7 @@ final class DropTargetView: NSView {
 
     // MARK: - Mail.app selection export (AppleScript)
 
-    private static let mailAccessErrorMessage = "Zugriff auf Mail wurde verweigert oder ist fehlgeschlagen."
+    private static let mailAccessErrorMessage = "Zugriff auf Mail wurde verweigert. Erlaube ihn unter Systemeinstellungen > Datenschutz & Sicherheit > Automation."
 
     /// Converts the messages currently selected in Mail.app (a drag always carries the selection,
     /// so dragging N selected messages converts all N) by running an AppleScript off the main

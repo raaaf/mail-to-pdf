@@ -11,20 +11,28 @@ final class PDFRenderer: NSObject, WKNavigationDelegate {
         case printFailed
     }
 
+    private static let a4Size = NSSize(width: 595.28, height: 841.89)
+
     private var webView: WKWebView?
     private var loadContinuation: (() -> Void)?
     private var printContinuation: ((Bool) -> Void)?
 
     func render(message: EmailMessage, to url: URL) async throws {
         let html = composeHTML(for: message)
-        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 595, height: 842))
+        let webPreferences = WKWebpagePreferences()
+        webPreferences.allowsContentJavaScript = false // invoices never need JS; untrusted input
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences = webPreferences
+        let webView = WKWebView(frame: NSRect(origin: .zero, size: Self.a4Size), configuration: configuration)
         webView.navigationDelegate = self
         self.webView = webView
 
         await waitForLoad(timeout: .seconds(10)) {
             webView.loadHTMLString(html, baseURL: nil)
         }
-        try? await Task.sleep(for: .seconds(1.5)) // grace period for images to finish loading
+        if referencesRemoteContent(html) {
+            try? await Task.sleep(for: .seconds(1.5)) // grace period for images to finish loading
+        }
 
         var success = await runPrintOperation(webView: webView, url: url)
         if !success || !FileManager.default.fileExists(atPath: url.path) {
@@ -44,7 +52,7 @@ final class PDFRenderer: NSObject, WKNavigationDelegate {
         }
         let escaped = escapeHTML(message.plainBody ?? "")
         let body = "<pre style=\"font: 12px -apple-system; white-space: pre-wrap\">\(escaped)</pre>"
-        return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body>\(header)\(body)</body></html>"
+        return wrapDocument(header + body)
     }
 
     private func headerBlock(for message: EmailMessage) -> String {
@@ -67,13 +75,22 @@ final class PDFRenderer: NSObject, WKNavigationDelegate {
             result.insert(contentsOf: header, at: range.upperBound)
             return result
         }
-        return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body>\(header)\(html)</body></html>"
+        return wrapDocument(header + html)
+    }
+
+    private func wrapDocument(_ body: String) -> String {
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body>\(body)</body></html>"
     }
 
     private func escapeHTML(_ text: String) -> String {
         text.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+    private func referencesRemoteContent(_ html: String) -> Bool {
+        let pattern = #"src\s*=\s*["']https?://|background\s*=\s*["']https?://|url\(\s*["']?https?://"#
+        return html.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     // MARK: - Load waiting (with timeout)
@@ -112,7 +129,7 @@ final class PDFRenderer: NSObject, WKNavigationDelegate {
 
     private func runPrintOperation(webView: WKWebView, url: URL) async -> Bool {
         let printInfo = NSPrintInfo()
-        printInfo.paperSize = NSSize(width: 595.28, height: 841.89)
+        printInfo.paperSize = Self.a4Size
         printInfo.topMargin = 36
         printInfo.bottomMargin = 36
         printInfo.leftMargin = 36
@@ -149,7 +166,7 @@ final class PDFRenderer: NSObject, WKNavigationDelegate {
     }
 
     private func offscreenWindow() -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 595, height: 842),
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: Self.a4Size),
                                styleMask: [.borderless], backing: .buffered, defer: false)
         window.setIsVisible(false)
         return window

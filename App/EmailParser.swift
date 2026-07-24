@@ -74,9 +74,12 @@ enum EmailParser {
         var pdfAttachments: [PDFAttachment] = []
     }
 
+    /// Maximum multipart nesting depth; guards against stack exhaustion on crafted/malicious input.
+    private static let maxMultipartDepth = 20
+
     /// Walks one MIME part (headers + body). Recurses into multipart containers, collects the first
     /// text/html and text/plain leaf bodies found (depth-first) and any PDF attachments.
-    private static func walk(partData: Data, into result: inout ParseResult) {
+    private static func walk(partData: Data, into result: inout ParseResult, depth: Int = 0) {
         let (headerData, bodyData) = splitHeaderAndBody(partData)
         let headers = parseHeaders(headerData)
         let contentType = parseContentType(headerValue(headers, "Content-Type"))
@@ -84,8 +87,9 @@ enum EmailParser {
         let disposition = headerValue(headers, "Content-Disposition").map(splitParams)
 
         if contentType.type.hasPrefix("multipart/"), let boundary = contentType.params["boundary"] {
+            guard depth < maxMultipartDepth else { return }
             for sub in splitMultipart(body: bodyData, boundary: boundary) {
-                walk(partData: sub, into: &result)
+                walk(partData: sub, into: &result, depth: depth + 1)
             }
             return
         }
@@ -102,7 +106,7 @@ enum EmailParser {
         let isPDF = contentType.type == "application/pdf" || (filename?.lowercased().hasSuffix(".pdf") ?? false)
         if isPDF {
             let data = decodeBody(bodyData, transferEncoding: transferEncoding)
-            let name = FilenameSanitizer.sanitize(filename ?? "attachment.pdf", fallback: "attachment.pdf")
+            let name = FilenameSanitizer.sanitize(filename ?? "Anhang.pdf", fallback: "Anhang.pdf")
             result.pdfAttachments.append(PDFAttachment(filename: name, data: data))
             return
         }
@@ -222,30 +226,52 @@ enum EmailParser {
     // MARK: - Multipart boundary splitting
 
     /// Splits a multipart body into its sub-part byte ranges using `--boundary` delimiter lines.
-    /// Round-trips through Latin-1 (a lossless 1:1 byte<->scalar mapping) so line-based scanning
-    /// never corrupts binary payloads such as base64 attachment data.
+    /// Operates directly on the raw bytes (no String round-trip): scans line-by-line for `\n`
+    /// boundaries (tolerating a preceding `\r`) and slices sub-part `Data` ranges in place. Each
+    /// part keeps its original line endings (CRLF or LF); header parsing and transfer decoding
+    /// already tolerate both, so no normalization is needed here.
     private static func splitMultipart(body: Data, boundary: String) -> [Data] {
-        guard let text = String(data: body, encoding: .isoLatin1) else { return [] }
-        let delimiter = "--\(boundary)"
-        let terminator = delimiter + "--"
+        guard let delimiter = ("--" + boundary).data(using: .isoLatin1) else { return [] }
+        let terminator = delimiter + Data("--".utf8)
 
         var parts: [Data] = []
-        var current: [String] = []
         var collecting = false
+        var partStart = body.startIndex
+        var lineStart = body.startIndex
+        let end = body.endIndex
 
-        for rawLine in text.components(separatedBy: "\n") {
-            let line = rawLine.hasSuffix("\r") ? String(rawLine.dropLast()) : rawLine
-            if line == terminator {
-                if collecting, let d = current.joined(separator: "\n").data(using: .isoLatin1) { parts.append(d) }
-                break
+        while lineStart < end {
+            let newlineIndex = body[lineStart...].firstIndex(of: 0x0A)
+            let lineEnd = newlineIndex ?? end
+            var matchEnd = lineEnd
+            if matchEnd > lineStart, body[matchEnd - 1] == 0x0D { matchEnd -= 1 }
+            let lineBytes = body.subdata(in: lineStart..<matchEnd)
+
+            // Content ends right before the EOL (CRLF or LF) that precedes this line, since that
+            // EOL belongs to the delimiter, not to the preceding part's payload.
+            var contentEnd = lineStart
+            if contentEnd > body.startIndex, body[contentEnd - 1] == 0x0A {
+                contentEnd -= 1
+                if contentEnd > body.startIndex, body[contentEnd - 1] == 0x0D {
+                    contentEnd -= 1
+                }
             }
-            if line == delimiter {
-                if collecting, let d = current.joined(separator: "\n").data(using: .isoLatin1) { parts.append(d) }
+            // An empty part (boundary line immediately followed by another boundary) walks
+            // contentEnd back past partStart; clamp so the slice below stays a valid (empty) range.
+            contentEnd = max(contentEnd, partStart)
+
+            if lineBytes == terminator {
+                if collecting { parts.append(body.subdata(in: partStart..<contentEnd)) }
+                return parts
+            }
+            if lineBytes == delimiter {
+                if collecting { parts.append(body.subdata(in: partStart..<contentEnd)) }
                 collecting = true
-                current = []
-                continue
+                partStart = newlineIndex.map { $0 + 1 } ?? end
             }
-            if collecting { current.append(line) }
+
+            guard let nl = newlineIndex else { break }
+            lineStart = nl + 1
         }
         return parts
     }
@@ -255,9 +281,7 @@ enum EmailParser {
     private static func decodeBody(_ data: Data, transferEncoding: String) -> Data {
         switch transferEncoding {
         case "base64":
-            let text = String(data: data, encoding: .ascii) ?? String(data: data, encoding: .isoLatin1) ?? ""
-            let stripped = text.filter { !$0.isWhitespace }
-            return Data(base64Encoded: stripped, options: .ignoreUnknownCharacters) ?? Data()
+            return Data(base64Encoded: data, options: .ignoreUnknownCharacters) ?? Data()
         case "quoted-printable":
             return decodeQuotedPrintable(data)
         default: // "7bit", "8bit", "binary", or anything unrecognized: passthrough

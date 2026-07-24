@@ -99,4 +99,41 @@ struct EmailParserTests {
         let header = String(data: attachment.data.prefix(5), encoding: .ascii)
         #expect(header == "%PDF-")
     }
+
+    @Test("[parser-crlf] CRLF messages parse identically to LF")
+    func crlfMessageParity() throws {
+        let message = try EmailParser.parse(data: fixtureData("crlf-multipart"))
+        #expect(message.subject == "CRLF Testnachricht")
+        let html = try #require(message.htmlBody)
+        #expect(html.contains("Grüße mit CRLF-Zeilenumbrüchen"))
+        let date = try #require(message.date)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        // "Wed, 16 Aug 2023 12:00:00 +0200" -> 10:00 UTC
+        #expect(components.year == 2023)
+        #expect(components.month == 8)
+        #expect(components.day == 16)
+        #expect(components.hour == 10)
+        #expect(components.minute == 0)
+    }
+
+    @Test("[parser-empty-part] empty multipart parts do not crash the parser")
+    func emptyMultipartPartDoesNotCrash() throws {
+        // Two boundary lines in a row ("--B\r\n--B\r\n") yield a zero-byte part between them;
+        // the byte-level splitMultipart must not trap slicing that empty range.
+        let raw = "Subject: Empty Part Test\r\n" +
+            "Content-Type: multipart/mixed; boundary=\"B\"\r\n" +
+            "\r\n" +
+            "--B\r\n" +
+            "--B\r\n" +
+            "Content-Type: text/html; charset=utf-8\r\n" +
+            "\r\n" +
+            "<p>Hallo Welt</p>\r\n" +
+            "--B--\r\n"
+        let data = try #require(raw.data(using: .utf8))
+        let message = try EmailParser.parse(data: data)
+        let html = try #require(message.htmlBody)
+        #expect(html.contains("Hallo Welt"))
+    }
 }

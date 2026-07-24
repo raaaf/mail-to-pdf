@@ -94,13 +94,13 @@ struct ConvertModelFilenameTests {
         #expect(subjectPart.count == 80)
     }
 
-    @Test("[convertmodel-empty-subject-fallback] an empty subject falls back to \"Mail\"")
+    @Test("[convertmodel-empty-subject-fallback] an empty subject falls back to \"E-Mail\"")
     func emptySubjectFallsBackToMail() {
         let model = ConvertModel()
         let message = makeMessage(subject: "", date: Date(timeIntervalSince1970: 0))
         let filename = model.suggestedFilename(for: message)
 
-        #expect(filename.hasSuffix(" Mail.pdf"))
+        #expect(filename.hasSuffix(" E-Mail.pdf"))
     }
 
     @Test("[convertmodel-pdf-extension] the suggested filename always ends with .pdf")

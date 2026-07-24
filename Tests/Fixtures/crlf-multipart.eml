@@ -1,0 +1,20 @@
+From: CRLF Sender <crlf@example.de>
+To: Empfaenger <empfaenger@example.de>
+Subject: CRLF Testnachricht
+Date: Wed, 16 Aug 2023 12:00:00 +0200
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="CRLF_BOUNDARY_1"
+
+--CRLF_BOUNDARY_1
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Dies ist die Text-Alternative mit CRLF.
+
+--CRLF_BOUNDARY_1
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<html><body><p>Gr=C3=BC=C3=9Fe mit CRLF-Zeilenumbr=C3=BCchen.</p></body></html>
+
+--CRLF_BOUNDARY_1--
