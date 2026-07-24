@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="App/Assets.xcassets/AppIcon.appiconset/icon_256.png" width="128" alt="MailToPDF app icon">
+</p>
+
 # MailToPDF
 
 A small native macOS app for turning emails into PDFs. Drag a message out of
