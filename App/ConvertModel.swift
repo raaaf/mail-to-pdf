@@ -1,7 +1,32 @@
 import AppKit
 import Observation
+import PDFKit
+import SwiftUI
 import UniformTypeIdentifiers
 import os
+
+/// Page-1 thumbnail shown inside the save panel itself (as `accessoryView`), since on a narrow
+/// window the panel sheet otherwise covers the in-window preview card entirely.
+private struct SavePanelPreview: View {
+    let image: NSImage
+    let pages: Int
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxHeight: 280)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+            Text(pages == 1 ? "Seite 1 von 1" : "Seite 1 von \(pages)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(width: 260, height: 330)
+    }
+}
 
 /// Drives the drop -> parse -> render -> save pipeline and the status shown in ContentView.
 @MainActor
@@ -10,9 +35,25 @@ final class ConvertModel {
     enum State: Equatable {
         case idle
         case converting(String)
+        case saving(preview: NSImage, pages: Int)
         case done(String)
         case cancelled
         case failed(String)
+
+        /// The preview image is compared by reference: it is only ever produced once per render,
+        /// so identity is a sufficient (and cheap) equality check for the SwiftUI diffing this feeds.
+        static func == (lhs: State, rhs: State) -> Bool {
+            switch (lhs, rhs) {
+            case (.idle, .idle), (.cancelled, .cancelled):
+                return true
+            case (.converting(let a), .converting(let b)), (.done(let a), .done(let b)), (.failed(let a), .failed(let b)):
+                return a == b
+            case (.saving(let imageA, let pagesA), .saving(let imageB, let pagesB)):
+                return imageA === imageB && pagesA == pagesB
+            default:
+                return false
+            }
+        }
     }
 
     var state: State = .idle
@@ -81,7 +122,9 @@ final class ConvertModel {
                 cleanUpIfMailDrop(url)
                 return
             }
+            async let invoiceInfo = InvoiceExtractor.extract(from: message)
             try await renderer.render(message: message, to: tempURL)
+            let invoice = await invoiceInfo
             guard !Task.isCancelled else {
                 state = .cancelled
                 scheduleReset(after: 3)
@@ -89,10 +132,18 @@ final class ConvertModel {
                 return
             }
 
+            let preview = makePreview(url: tempURL)
+            if let preview {
+                state = .saving(preview: preview.thumbnail, pages: preview.pages)
+            }
+
             let panel = NSSavePanel()
             panel.allowedContentTypes = [.pdf]
-            panel.nameFieldStringValue = suggestedFilename(for: message)
-            guard panel.runModal() == .OK, let destination = panel.url else {
+            panel.nameFieldStringValue = suggestedFilename(for: message, invoice: invoice)
+            if let preview {
+                panel.accessoryView = makeAccessoryView(thumbnail: preview.thumbnail, pages: preview.pages)
+            }
+            guard await presentSavePanel(panel) == .OK, let destination = panel.url else {
                 state = .cancelled
                 scheduleReset(after: 3)
                 cleanUpIfMailDrop(url)
@@ -165,11 +216,52 @@ final class ConvertModel {
         }
     }
 
-    func suggestedFilename(for message: EmailMessage) -> String {
+    /// Renders a small page-1 thumbnail plus the total page count, for the "saving" preview card
+    /// and the save panel's accessory view. Returns nil if the PDF can't be opened; the pipeline
+    /// still proceeds straight to the save panel in that case.
+    private func makePreview(url: URL) -> (thumbnail: NSImage, pages: Int)? {
+        guard let document = PDFDocument(url: url), let page = document.page(at: 0) else { return nil }
+        let thumbnail = page.thumbnail(of: NSSize(width: 220, height: 300), for: .mediaBox)
+        return (thumbnail, document.pageCount)
+    }
+
+    /// Wraps the SwiftUI preview in an `NSHostingView` sized to fit the panel's accessory area.
+    private func makeAccessoryView(thumbnail: NSImage, pages: Int) -> NSView {
+        let hostingView = NSHostingView(rootView: SavePanelPreview(image: thumbnail, pages: pages))
+        hostingView.frame = NSRect(x: 0, y: 0, width: 260, height: 330)
+        return hostingView
+    }
+
+    /// Shows the save panel as a sheet on the key/main window (no extra click versus a plain modal),
+    /// falling back to `runModal()` if there is no window to attach a sheet to.
+    private func presentSavePanel(_ panel: NSSavePanel) async -> NSApplication.ModalResponse {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else {
+            return panel.runModal()
+        }
+        return await withCheckedContinuation { continuation in
+            panel.beginSheetModal(for: window) { response in
+                continuation.resume(returning: response)
+            }
+        }
+    }
+
+    /// Builds "<date> <merchant> <amount>.pdf" from whatever `invoice` could extract, omitting
+    /// missing parts; falls back to the subject-based name when neither could be extracted.
+    func suggestedFilename(for message: EmailMessage, invoice: InvoiceInfo = InvoiceInfo(merchant: nil, amount: nil)) -> String {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd"
         let dateString = dateFormatter.string(from: message.date ?? Date())
-        let subject = FilenameSanitizer.sanitize(message.subject, maxLength: 80, fallback: "E-Mail")
-        return "\(dateString) \(subject).pdf"
+
+        var parts = [dateString]
+        if let merchant = invoice.merchant, !merchant.isEmpty {
+            parts.append(FilenameSanitizer.sanitize(merchant, maxLength: 60, fallback: ""))
+        }
+        if let amount = invoice.amount, !amount.isEmpty {
+            parts.append(FilenameSanitizer.sanitize(amount, maxLength: 20, fallback: ""))
+        }
+        if parts.count == 1 {
+            parts.append(FilenameSanitizer.sanitize(message.subject, maxLength: 80, fallback: "E-Mail"))
+        }
+        return parts.filter { !$0.isEmpty }.joined(separator: " ") + ".pdf"
     }
 }

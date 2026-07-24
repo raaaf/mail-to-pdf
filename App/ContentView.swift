@@ -63,7 +63,29 @@ struct ContentView: View {
 
     // MARK: - State-driven center content
 
+    /// Swaps between the icon/title/subtitle content and the PDF preview card as a whole, so the
+    /// preview can slide in "out of the envelope" instead of morphing individual pieces.
     private var stateContent: some View {
+        Group {
+            if case .saving(let preview, let pages) = model.state {
+                previewCard(image: preview, pages: pages)
+                    .transition(previewTransition)
+            } else {
+                defaultStateContent
+                    .transition(reduceMotion ? .identity : .opacity)
+            }
+        }
+    }
+
+    private var previewTransition: AnyTransition {
+        guard !reduceMotion else { return .identity }
+        return .asymmetric(
+            insertion: .move(edge: .bottom).combined(with: .scale(scale: 0.85)).combined(with: .opacity),
+            removal: .opacity
+        )
+    }
+
+    private var defaultStateContent: some View {
         VStack(spacing: 14) {
             icon
                 .font(.system(size: 54, weight: .light))
@@ -91,6 +113,22 @@ struct ContentView: View {
         }
     }
 
+    /// The "saving" state: a page-1 thumbnail with a page-count caption. No icon slot and no
+    /// buttons here, the save panel sheet above it owns the save/cancel actions.
+    private func previewCard(image: NSImage, pages: Int) -> some View {
+        VStack(spacing: 10) {
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: 220, maxHeight: 300)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .shadow(color: .black.opacity(0.25), radius: 12, y: 6)
+                .accessibilityHidden(true)
+            Text(pages == 1 ? "Seite 1 von 1" : "Seite 1 von \(pages)")
+                .font(.callout).foregroundStyle(.secondary)
+        }
+    }
+
     @ViewBuilder
     private var icon: some View {
         switch model.state {
@@ -98,10 +136,10 @@ struct ContentView: View {
             Image(systemName: "envelope.arrow.triangle.branch")
                 .foregroundStyle(isTargeted ? Color.accentColor : Color.secondary)
                 .scaleEffect(isTargeted && !reduceMotion ? 1.08 : 1)
-        case .converting:
+        case .converting, .saving:
             Image(systemName: "envelope.open")
                 .foregroundStyle(Color.accentColor)
-                .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
+                .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion && isConverting)
         case .done:
             if reduceMotion {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.green)
@@ -117,10 +155,16 @@ struct ContentView: View {
         }
     }
 
+    private var isConverting: Bool {
+        if case .converting = model.state { return true }
+        return false
+    }
+
     private var title: String {
         switch model.state {
         case .idle: "E-Mail hierher ziehen"
         case .converting: "Wird verarbeitet…"
+        case .saving: "Wird gespeichert…"
         case .done: "Gespeichert"
         case .failed: "Fehlgeschlagen"
         case .cancelled: "Abgebrochen"
@@ -138,6 +182,7 @@ struct ContentView: View {
         switch model.state {
         case .idle: "und sie wird als PDF gespeichert"
         case .converting(let name): name
+        case .saving(_, let pages): pages == 1 ? "Seite 1 von 1" : "Seite 1 von \(pages)"
         case .done(let name): name
         case .failed(let message): message
         case .cancelled: "Es wurde kein PDF gespeichert."
@@ -160,6 +205,7 @@ struct ContentView: View {
         switch model.state {
         case .idle: ""
         case .converting: "Verarbeitung läuft"
+        case .saving(_, let pages): "Vorschau bereit, \(pages) Seiten, Speichern-Dialog geöffnet"
         case .done: "Erfolgreich gespeichert"
         case .failed(let message): message
         case .cancelled: "Abgebrochen"

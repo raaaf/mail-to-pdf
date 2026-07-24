@@ -13,7 +13,8 @@ attachments. No third-party dependencies, no SPM package.
 | `App/MailDropView.swift` | `NSViewRepresentable` drag target: Mail selection (AppleScript), file promises, Finder `.eml`. |
 | `App/EmailParser.swift` | Pure MIME parser (no AppKit). Headers, multipart, RFC 2047, charsets, transfer encodings, PDF extraction. Unit-tested. |
 | `App/PDFRenderer.swift` | Offscreen `WKWebView` + `NSPrintOperation` pagination to A4 PDF, `createPDF` fallback. |
-| `App/ConvertModel.swift` | Orchestrates parse -> render -> save panel -> attachment save; owns UI state. |
+| `App/InvoiceExtractor.swift` | Merchant/amount guess for smarter filenames: on-device FoundationModels when available, regex fallback otherwise. |
+| `App/ConvertModel.swift` | Orchestrates parse -> render + extract (concurrently) -> preview -> save panel sheet -> attachment save; owns UI state. |
 
 ## Key technical decisions
 
@@ -34,6 +35,12 @@ attachments. No third-party dependencies, no SPM package.
 - **Hand-rolled MIME parser**, deliberately: scoped enough to not need a
   dependency, and keeps `EmailParser` unit-testable without a live
   WebKit/AppKit stack.
+- **FoundationModels usage is gated twice**: `#available(macOS 26.0, *)` at
+  compile time (deployment target stays macOS 15) and a runtime
+  `SystemLanguageModel.default.availability` check, raced against an 8s
+  timeout. The regex-based fallback in `InvoiceExtractor.extractFallback` is
+  always compiled and is the only path unit-tested, since the LLM path is
+  not deterministic.
 
 ## Build and test
 

@@ -20,7 +20,20 @@ files you can archive.
   with a small header block (From, Subject, Date) prepended.
 - Extracts PDF attachments (by content type or a filename ending in .pdf)
   and writes them next to the saved email PDF.
-- Asks where to save via a standard save panel, once per dropped email.
+- Shows a page-1 preview of the rendered PDF while a save panel opens as a
+  sheet on the window, then saves where you chose, once per dropped email.
+
+## Smart filenames
+
+When a merchant name and a total amount can be extracted from the email, the
+suggested filename becomes `YYYY-MM-DD <Merchant> <Amount>.pdf` instead of
+the date-plus-subject default. On a Mac with Apple Intelligence available,
+extraction runs entirely on-device via Apple's FoundationModels framework;
+nothing leaves the Mac, and it is raced against an 8 second timeout. When
+Apple Intelligence isn't available (or times out), a regex-based fallback
+looks for the sender's display name and the largest EUR amount mentioned in
+the email. Either way, if nothing can be extracted, the filename falls back
+to the date-plus-subject default.
 
 ## Requirements
 
