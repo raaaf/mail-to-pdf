@@ -2,9 +2,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @State private var model = ConvertModel()
+    let model: ConvertModel
     @State private var isTargeted = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(model: ConvertModel) {
+        self.model = model
+    }
 
     var body: some View {
         dropZone
@@ -44,7 +48,12 @@ struct ContentView: View {
         }
         .padding(16)
         .overlay {
-            MailDropView(onTargeted: { isTargeted = $0 }, onFiles: { model.handle($0) }, onError: { model.fail($0) })
+            MailDropView(
+                onTargeted: { isTargeted = $0 },
+                onFiles: { model.handle($0) },
+                onError: { model.fail($0) },
+                onDropStarted: { model.beginReceiving() }
+            )
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isTargeted)
         .accessibilityElement(children: .contain)
@@ -78,11 +87,7 @@ struct ContentView: View {
     }
 
     private var previewTransition: AnyTransition {
-        guard !reduceMotion else { return .identity }
-        return .asymmetric(
-            insertion: .move(edge: .bottom).combined(with: .scale(scale: 0.85)).combined(with: .opacity),
-            removal: .opacity
-        )
+        ConvertModel.previewTransition(reduceMotion: reduceMotion)
     }
 
     private var defaultStateContent: some View {

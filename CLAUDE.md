@@ -1,20 +1,25 @@
 # MailToPDF
 
-Native macOS app (SwiftUI, Swift 6, macOS 15+). Drag an email out of Apple
-Mail or drop a `.eml` file, get a paginated A4 PDF plus extracted PDF
-attachments. No third-party dependencies, no SPM package.
+Native macOS menubar app (SwiftUI + AppKit, Swift 6, macOS 15+). Drag an email
+out of Apple Mail or drop a `.eml` file onto the menubar icon, get a
+paginated A4 PDF plus extracted PDF attachments. No third-party dependencies,
+no SPM package.
 
 ## Architecture
 
 | File | Responsibility |
 |---|---|
-| `App/MailToPDFApp.swift` | App entry point, single `WindowGroup`. |
-| `App/ContentView.swift` | Drop zone UI, state-driven (idle/converting/done/failed). |
-| `App/MailDropView.swift` | `NSViewRepresentable` drag target: Mail selection (AppleScript), file promises, Finder `.eml`. |
+| `App/MailToPDFApp.swift` | `NSApplicationDelegate` bootstrap (`static func main()`), not a SwiftUI `App`/`Scene`. No Dock icon (`LSUIElement`), so nothing to host a window-based scene. |
+| `App/StatusItemController.swift` | Owns the `NSStatusItem`, its `DropTargetView` drop target, the popover (hosts `ContentView`), the right-click menu (Einstellungen, Beenden), the settings window, the icon success/failure feedback, and the `DropShelfController`. |
+| `App/DropShelfController.swift` | Floating drop target that fades in just below the cursor during a relevant system-wide drag (Mail message or `.eml`), so the user doesn't have to aim for the menubar icon; becomes a live status card on drop, same states as `ContentView`. |
+| `App/SettingsView.swift` | Settings window: launch-at-login toggle above a minimal about/credit block (app icon, version, author, link to rafaelalex.de). |
+| `App/LoginItemManager.swift` | Wraps `SMAppService.mainApp` for the launch-at-login toggle; reads `.status` back after register/unregister rather than assuming success. |
+| `App/ContentView.swift` | Drop zone UI, state-driven (idle/converting/saving/done/failed/cancelled). Takes its `ConvertModel` via `init`, does not own it. |
+| `App/MailDropView.swift` | `NSViewRepresentable` wrapping `DropTargetView`, used inside `ContentView`'s popover drop zone; `DropTargetView` itself is also attached directly as a status-item-button subview by `StatusItemController`. Drag target: Mail selection (AppleScript), file promises, Finder `.eml`. |
 | `App/EmailParser.swift` | Pure MIME parser (no AppKit). Headers, multipart, RFC 2047, charsets, transfer encodings, PDF extraction. Unit-tested. |
 | `App/PDFRenderer.swift` | Offscreen `WKWebView` + `NSPrintOperation` pagination to A4 PDF, `createPDF` fallback. |
 | `App/InvoiceExtractor.swift` | Merchant/amount guess for smarter filenames: on-device FoundationModels when available, regex fallback otherwise. |
-| `App/ConvertModel.swift` | Orchestrates parse -> render + extract (concurrently) -> preview -> save panel sheet -> attachment save; owns UI state. |
+| `App/ConvertModel.swift` | Orchestrates parse -> render + extract (concurrently) -> preview -> centered save panel (`runModal`) -> attachment save; owns UI state. |
 
 ## Key technical decisions
 
@@ -41,6 +46,31 @@ attachments. No third-party dependencies, no SPM package.
   timeout. The regex-based fallback in `InvoiceExtractor.extractFallback` is
   always compiled and is the only path unit-tested, since the LLM path is
   not deterministic.
+- **Menubar-only via `LSUIElement`**, not `NSApp.setActivationPolicy`: the
+  Info.plist key alone suppresses the Dock icon before launch. The status
+  item's button hosts the same `DropTargetView` used inside `ContentView`
+  (its `hitTest` already returns nil so clicks pass through to the button;
+  drag-destination resolution is independent of hitTest), so click-to-toggle
+  and drag-to-convert work on the exact same view without duplicating drop
+  logic. The save panel is always a centered `NSSavePanel.runModal()`, not a
+  window sheet: the app is menubar-only, so there is no app window to attach
+  a sheet to (and pinning it under the menubar icon would be worse UX than
+  centering it).
+- **`runModal()` blocks the main actor for as long as the save panel is
+  open.** `ConvertModel` sets `state = .saving(...)` and then `await
+  Task.yield()` immediately before calling it, so already-enqueued MainActor
+  observers (the drop shelf's hide-on-`.saving` handler, SwiftUI's own
+  diffing) actually get to run first; without that yield the shelf would
+  stay visible for the panel's entire lifetime instead of hiding right away.
+- **`DropShelfController` detects drags by polling `NSPasteboard(name: .drag)`'s
+  `changeCount` from global `.leftMouseDragged` monitors**, not by registering
+  as a system-wide drag destination. `NSEvent`'s global monitors need no
+  Accessibility permission. Monitor tokens are `nonisolated(unsafe)` so they
+  can be removed in `deinit`, which Swift 6 requires to be nonisolated even
+  on a `@MainActor` class; the shelf's fade uses the `async` overload of
+  `NSAnimationContext.runAnimationGroup` rather than its `completionHandler:`
+  overload, since that parameter is `@Sendable` and can't capture the
+  (non-Sendable) `NSPanel`.
 
 ## Build and test
 

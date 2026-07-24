@@ -5,31 +5,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 import os
 
-/// Page-1 thumbnail shown inside the save panel itself (as `accessoryView`), since on a narrow
-/// window the panel sheet otherwise covers the in-window preview card entirely.
-private struct SavePanelPreview: View {
-    let image: NSImage
-    let pages: Int
-
-    var body: some View {
-        VStack(spacing: 10) {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxHeight: 280)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .shadow(color: .black.opacity(0.25), radius: 12, y: 6)
-                .accessibilityHidden(true)
-            Text(ConvertModel.pageCountLabel(pages))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(12)
-        .frame(width: 260, height: 330)
-        .accessibilityElement(children: .combine)
-    }
-}
-
 /// Drives the drop -> parse -> render -> save pipeline and the status shown in ContentView.
 @MainActor
 @Observable
@@ -70,6 +45,23 @@ final class ConvertModel {
     /// Reports an error that happened before any file could be parsed (e.g. drag source access).
     func fail(_ message: String) {
         state = .failed(message)
+    }
+
+    /// Resets a "failed" state back to idle, e.g. when the user taps the drop shelf's failed
+    /// card to dismiss it. A no-op in any other state.
+    func dismissFailure() {
+        if case .failed = state { state = .idle }
+    }
+
+    /// Shows "converting" feedback the instant a drop is accepted, before `handle(_:)` even runs:
+    /// the Mail import path (AppleScript) can take 0.5-2s before it has URLs to hand to `handle`,
+    /// and without this placeholder state a UI observing `state` would still see `.idle` during
+    /// that gap. `handle`'s own `.converting(url.lastPathComponent)` overwrites the placeholder
+    /// name once real processing starts; a no-op unless still idle, so it never clobbers an
+    /// already-running conversion.
+    func beginReceiving() {
+        guard case .idle = state else { return }
+        state = .converting("E-Mail wird gelesen…")
     }
 
     /// Processes each dropped file sequentially, showing one save panel per email.
@@ -118,6 +110,7 @@ final class ConvertModel {
             let message = try await Task.detached {
                 try EmailParser.parse(fileURL: url)
             }.value
+            state = .converting(message.subject.isEmpty ? url.lastPathComponent : message.subject)
             guard !Task.isCancelled else {
                 state = .cancelled
                 scheduleReset(after: 3)
@@ -144,6 +137,11 @@ final class ConvertModel {
             // is awaited only afterwards, right before it's needed for the panel's filename.
             if let preview {
                 state = .saving(preview: preview.thumbnail, pages: preview.pages)
+                // Lets already-enqueued MainActor observers (the drop shelf's hide-on-.saving
+                // handler) actually run before `presentSavePanel` below blocks the MainActor
+                // inside `runModal()`; without this hop the shelf stays visible for the panel's
+                // entire lifetime.
+                await Task.yield()
             }
 
             let invoice = await invoiceInfo
@@ -151,10 +149,7 @@ final class ConvertModel {
             let panel = NSSavePanel()
             panel.allowedContentTypes = [.pdf]
             panel.nameFieldStringValue = suggestedFilename(for: message, invoice: invoice)
-            if let preview {
-                panel.accessoryView = makeAccessoryView(thumbnail: preview.thumbnail, pages: preview.pages)
-            }
-            guard await presentSavePanel(panel) == .OK, let destination = panel.url else {
+            guard presentSavePanel(panel) == .OK, let destination = panel.url else {
                 state = .cancelled
                 scheduleReset(after: 3)
                 cleanUpIfMailDrop(url)
@@ -228,8 +223,8 @@ final class ConvertModel {
     }
 
     /// Renders a small page-1 thumbnail plus the total page count, for the "saving" preview card
-    /// and the save panel's accessory view. Returns nil if the PDF can't be opened; the pipeline
-    /// still proceeds straight to the save panel in that case.
+    /// shown in the popover/shelf. Returns nil if the PDF can't be opened; the pipeline still
+    /// proceeds straight to the save panel in that case.
     /// Does synchronous disk I/O, so it's `nonisolated` and meant to be called off the main actor
     /// (e.g. via `Task.detached`); the thumbnail comes back as `Data` rather than `NSImage`, which
     /// isn't `Sendable`, and is turned back into an image on the main actor by the caller.
@@ -240,30 +235,28 @@ final class ConvertModel {
         return (thumbnailData, document.pageCount)
     }
 
-    /// Shared "Seite 1 von N" caption used by the in-window preview card and the save panel's
-    /// accessory view, with the singular special case for a 1-page document.
+    /// Shared "Seite 1 von N" caption used by the in-window preview card, with the singular
+    /// special case for a 1-page document.
     static func pageCountLabel(_ pages: Int) -> String {
         pages == 1 ? "Seite 1 von 1" : "Seite 1 von \(pages)"
     }
 
-    /// Wraps the SwiftUI preview in an `NSHostingView` sized to fit the panel's accessory area.
-    private func makeAccessoryView(thumbnail: NSImage, pages: Int) -> NSView {
-        let hostingView = NSHostingView(rootView: SavePanelPreview(image: thumbnail, pages: pages))
-        hostingView.frame = NSRect(x: 0, y: 0, width: 260, height: 330)
-        return hostingView
+    /// Shared "slide out of the envelope" insertion transition for the preview card, used by both
+    /// ContentView's in-popover preview and DropShelfController's shelf preview.
+    static func previewTransition(reduceMotion: Bool) -> AnyTransition {
+        guard !reduceMotion else { return .identity }
+        return .asymmetric(
+            insertion: .move(edge: .bottom).combined(with: .scale(scale: 0.85)).combined(with: .opacity),
+            removal: .opacity
+        )
     }
 
-    /// Shows the save panel as a sheet on the key/main window (no extra click versus a plain modal),
-    /// falling back to `runModal()` if there is no window to attach a sheet to.
-    private func presentSavePanel(_ panel: NSSavePanel) async -> NSApplication.ModalResponse {
-        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else {
-            return panel.runModal()
-        }
-        return await withCheckedContinuation { continuation in
-            panel.beginSheetModal(for: window) { response in
-                continuation.resume(returning: response)
-            }
-        }
+    /// Shows the save panel as a plain modal, centered on screen. The app is menubar-only, so
+    /// there's no app window to attach a sheet to (that would pin the panel under the menubar
+    /// icon instead of centering it).
+    private func presentSavePanel(_ panel: NSSavePanel) -> NSApplication.ModalResponse {
+        NSApp.activate(ignoringOtherApps: true)
+        return panel.runModal()
     }
 
     /// Builds "<date> <merchant> <amount>.pdf" from whatever `invoice` could extract, omitting

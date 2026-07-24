@@ -8,12 +8,14 @@ struct MailDropView: NSViewRepresentable {
     var onTargeted: (Bool) -> Void
     var onFiles: ([URL]) -> Void
     var onError: ((String) -> Void)? = nil
+    var onDropStarted: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> DropTargetView {
         let view = DropTargetView()
         view.onTargeted = onTargeted
         view.onFiles = onFiles
         view.onError = onError
+        view.onDropStarted = onDropStarted
         return view
     }
 
@@ -21,6 +23,7 @@ struct MailDropView: NSViewRepresentable {
         nsView.onTargeted = onTargeted
         nsView.onFiles = onFiles
         nsView.onError = onError
+        nsView.onDropStarted = onDropStarted
     }
 }
 
@@ -51,6 +54,10 @@ final class DropTargetView: NSView {
     var onTargeted: ((Bool) -> Void)?
     var onFiles: (([URL]) -> Void)?
     var onError: ((String) -> Void)?
+    /// Fired synchronously as soon as a drop is accepted, before any async work (AppleScript,
+    /// file-promise receiving) starts. Lets observers show "receiving" feedback immediately,
+    /// instead of only once `onFiles`/`onError` eventually fires seconds later.
+    var onDropStarted: (() -> Void)?
 
     /// Dedicated queue for `NSFilePromiseReceiver` completion work, per Apple's guidance.
     private let promiseQueue = OperationQueue()
@@ -95,6 +102,7 @@ final class DropTargetView: NSView {
 
         // Mail.app messages: no file promise is offered, only this custom pasteboard type.
         if pasteboard.types?.contains(Self.mailMessageTransferType) == true {
+            onDropStarted?()
             receiveMailSelection()
             return true
         }
@@ -114,6 +122,7 @@ final class DropTargetView: NSView {
         }
         guard !directURLs.isEmpty || !promiseReceivers.isEmpty else { return false }
 
+        onDropStarted?()
         if !directURLs.isEmpty {
             onFiles?(directURLs)
         }

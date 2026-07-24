@@ -4,26 +4,49 @@
 
 # MailToPDF
 
-A small native macOS app for turning emails into PDFs. Drag a message out of
-Apple Mail, or drop a `.eml` file from Finder, and get a paginated A4 PDF back.
-Any PDF attachments on the email are extracted and saved alongside it. Built
-for bookkeeping: converting invoices and receipts that arrive by email into
-files you can archive.
+A small native macOS menubar app for turning emails into PDFs. Drag a message
+out of Apple Mail, or drop a `.eml` file from Finder, straight onto the
+menubar icon, and get a paginated A4 PDF back. Any PDF attachments on the
+email are extracted and saved alongside it. Built for bookkeeping: converting
+invoices and receipts that arrive by email into files you can archive.
+
+## Menubar usage
+
+MailToPDF has no Dock icon and no regular window (`LSUIElement`); it lives
+entirely in the menubar.
+
+- **Drop a message or `.eml` file directly onto the menubar icon** to convert
+  it. This works even while the popover is closed.
+- **Left-click** the icon to open/close a popover with the same drop zone,
+  a "Datei auswählen…" file picker, and the status/preview UI.
+- **Right-click** the icon for a menu with "Einstellungen…" (Cmd+,, a
+  settings window with a "Bei Anmeldung starten" launch-at-login toggle plus
+  app info and a link to the author's site) and "Beenden" (Cmd+Q) to quit.
+- The icon briefly swaps to a checkmark or an x to confirm success or
+  failure, even if the popover is closed at the time.
+- **A small drop shelf fades in just below the cursor** whenever
+  you start dragging a Mail message or a `.eml` file anywhere in the system,
+  so you don't have to aim for the menubar icon or hover the very top edge
+  of the screen (which can trigger Mission Control). It works over
+  fullscreen apps and on every Space. Drop on it and it turns into a live
+  status card right there, showing conversion progress and the page preview
+  before the save panel appears, instead of just disappearing.
 
 ## What it does
 
-- Accepts a dragged Mail.app message or a `.eml` file (drag-and-drop, or a
-  file picker).
+- Accepts a dragged Mail.app message or a `.eml` file, dropped on the
+  menubar icon or on the popover's drop zone (or picked via the file picker).
 - Parses the MIME structure (headers, multipart bodies, charsets, transfer
   encodings) with a small hand-rolled parser, no third-party dependencies.
 - Renders the HTML body (or a plain-text fallback) into a paginated A4 PDF,
   with a small header block (From, Subject, Date) prepended.
 - Extracts PDF attachments (by content type or a filename ending in .pdf)
   and writes them next to the saved email PDF.
-- Shows a page-1 preview of the rendered PDF while a save panel opens as a
-  sheet on the window, then saves where you chose, once per dropped email.
-  The same preview also appears inside the save panel itself (an accessory
-  view), since the sheet can cover the window card on narrow windows.
+- Shows a live status card while converting (subject line, then a page-1
+  preview of the rendered PDF) in whichever surface you dropped on (popover,
+  drop shelf, or just the menubar icon), then opens a centered save dialog
+  with a smart suggested filename, and saves where you chose. Once per
+  dropped email.
 
 ## Smart filenames
 
