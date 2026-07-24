@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "fix_patterns": [],
+  "dismissals": {},
+  "recurrences": {
+    "unguarded concurrent shared renderer state": 1,
+    "synchronous parsing on main actor": 1,
+    "no keyboard voiceover reachable action outside idle state": 1,
+    "state changes not announced to voiceover": 1,
+    "javascript enabled in webview rendering untrusted html": 1,
+    "duplicated error handling logic": 1,
+    "silent failure swallowed without logging": 1,
+    "missing fixture for primary input path": 1,
+    "inefficient data string round trip allocation": 1,
+    "transient state auto vanished too quickly": 1,
+    "docs understate actual behavior": 1,
+    "untranslated english fallback string": 1,
+    "temp file orphaned on error path": 1
+  }
+}
