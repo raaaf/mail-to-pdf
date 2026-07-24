@@ -17,14 +17,16 @@ private struct SavePanelPreview: View {
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(maxHeight: 280)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
-            Text(pages == 1 ? "Seite 1 von 1" : "Seite 1 von \(pages)")
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .shadow(color: .black.opacity(0.25), radius: 12, y: 6)
+                .accessibilityHidden(true)
+            Text(ConvertModel.pageCountLabel(pages))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding(12)
         .frame(width: 260, height: 330)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -124,7 +126,6 @@ final class ConvertModel {
             }
             async let invoiceInfo = InvoiceExtractor.extract(from: message)
             try await renderer.render(message: message, to: tempURL)
-            let invoice = await invoiceInfo
             guard !Task.isCancelled else {
                 state = .cancelled
                 scheduleReset(after: 3)
@@ -132,10 +133,20 @@ final class ConvertModel {
                 return
             }
 
-            let preview = makePreview(url: tempURL)
+            let preview: (thumbnail: NSImage, pages: Int)?
+            if let rendered = await Task.detached { Self.makePreview(url: tempURL) }.value,
+               let image = NSImage(data: rendered.thumbnailData) {
+                preview = (image, rendered.pages)
+            } else {
+                preview = nil
+            }
+            // Show the preview immediately; the invoice extraction (which the LLM can stall on)
+            // is awaited only afterwards, right before it's needed for the panel's filename.
             if let preview {
                 state = .saving(preview: preview.thumbnail, pages: preview.pages)
             }
+
+            let invoice = await invoiceInfo
 
             let panel = NSSavePanel()
             panel.allowedContentTypes = [.pdf]
@@ -219,10 +230,20 @@ final class ConvertModel {
     /// Renders a small page-1 thumbnail plus the total page count, for the "saving" preview card
     /// and the save panel's accessory view. Returns nil if the PDF can't be opened; the pipeline
     /// still proceeds straight to the save panel in that case.
-    private func makePreview(url: URL) -> (thumbnail: NSImage, pages: Int)? {
+    /// Does synchronous disk I/O, so it's `nonisolated` and meant to be called off the main actor
+    /// (e.g. via `Task.detached`); the thumbnail comes back as `Data` rather than `NSImage`, which
+    /// isn't `Sendable`, and is turned back into an image on the main actor by the caller.
+    nonisolated static func makePreview(url: URL) -> (thumbnailData: Data, pages: Int)? {
         guard let document = PDFDocument(url: url), let page = document.page(at: 0) else { return nil }
         let thumbnail = page.thumbnail(of: NSSize(width: 220, height: 300), for: .mediaBox)
-        return (thumbnail, document.pageCount)
+        guard let thumbnailData = thumbnail.tiffRepresentation else { return nil }
+        return (thumbnailData, document.pageCount)
+    }
+
+    /// Shared "Seite 1 von N" caption used by the in-window preview card and the save panel's
+    /// accessory view, with the singular special case for a 1-page document.
+    static func pageCountLabel(_ pages: Int) -> String {
+        pages == 1 ? "Seite 1 von 1" : "Seite 1 von \(pages)"
     }
 
     /// Wraps the SwiftUI preview in an `NSHostingView` sized to fit the panel's accessory area.
@@ -246,7 +267,9 @@ final class ConvertModel {
     }
 
     /// Builds "<date> <merchant> <amount>.pdf" from whatever `invoice` could extract, omitting
-    /// missing parts; falls back to the subject-based name when neither could be extracted.
+    /// missing parts. The amount is what makes the name self-sufficient without the subject, so
+    /// the sanitized subject is appended whenever no amount was extracted, regardless of whether
+    /// a merchant was found.
     func suggestedFilename(for message: EmailMessage, invoice: InvoiceInfo = InvoiceInfo(merchant: nil, amount: nil)) -> String {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd"
@@ -259,7 +282,7 @@ final class ConvertModel {
         if let amount = invoice.amount, !amount.isEmpty {
             parts.append(FilenameSanitizer.sanitize(amount, maxLength: 20, fallback: ""))
         }
-        if parts.count == 1 {
+        if invoice.amount == nil {
             parts.append(FilenameSanitizer.sanitize(message.subject, maxLength: 80, fallback: "E-Mail"))
         }
         return parts.filter { !$0.isEmpty }.joined(separator: " ") + ".pdf"

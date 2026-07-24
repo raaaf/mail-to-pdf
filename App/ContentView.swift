@@ -124,7 +124,7 @@ struct ContentView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .shadow(color: .black.opacity(0.25), radius: 12, y: 6)
                 .accessibilityHidden(true)
-            Text(pages == 1 ? "Seite 1 von 1" : "Seite 1 von \(pages)")
+            Text(ConvertModel.pageCountLabel(pages))
                 .font(.callout).foregroundStyle(.secondary)
         }
     }
@@ -182,7 +182,7 @@ struct ContentView: View {
         switch model.state {
         case .idle: "und sie wird als PDF gespeichert"
         case .converting(let name): name
-        case .saving(_, let pages): pages == 1 ? "Seite 1 von 1" : "Seite 1 von \(pages)"
+        case .saving(_, let pages): ConvertModel.pageCountLabel(pages)
         case .done(let name): name
         case .failed(let message): message
         case .cancelled: "Es wurde kein PDF gespeichert."

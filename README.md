@@ -22,6 +22,8 @@ files you can archive.
   and writes them next to the saved email PDF.
 - Shows a page-1 preview of the rendered PDF while a save panel opens as a
   sheet on the window, then saves where you chose, once per dropped email.
+  The same preview also appears inside the save panel itself (an accessory
+  view), since the sheet can cover the window card on narrow windows.
 
 ## Smart filenames
 
@@ -37,8 +39,11 @@ to the date-plus-subject default.
 
 ## Requirements
 
-- macOS 15 or later
-- Xcode (recent enough for Swift 6 / macOS 15 SDK)
+- Runtime: macOS 15 or later
+- Build: Xcode 26 or later (the code does an unconditional `import
+  FoundationModels`, a macOS 26 SDK framework)
+- Optional: Apple Intelligence enabled on a macOS 26+ Mac, for on-device
+  smart filenames; without it, extraction falls back to the regex heuristic
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
 
 ## Building
