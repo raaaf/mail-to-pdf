@@ -2,20 +2,30 @@
 
 This log is updated automatically after every audit.
 
-## Trends (as of 2026-07-24)
+## Trends (as of 2026-07-24, audit #2)
 
 | Metric | Value |
 |---|---|
-| Total audits | 1 |
-| Critical trend (last 3) | 4 (single data point, no trend yet) |
-| Important trend (last 3) | 8 (single data point, no trend yet) |
-| Top category (last 5) | Architecture/A11y/Performance/Quality tied (2x each) |
-| Avg findings/audit | 18 |
+| Total audits | 2 |
+| Critical trend (last 3) | 4 -> 2 |
+| Important trend (last 3) | 8 -> 8 |
+| Top category (last 5) | Architecture/Concurrency (structured-concurrency misuse 3x across both audits) |
+| Avg findings/audit | 16 |
 
 **Repeat offenders (>=3):**
-- None yet — first audit, all tracked patterns seeded at 1x
+- Structured-concurrency lifetime misuse (3x: unguarded concurrent drops; TaskGroup timeout awaiting children; async-let scope-exit stall). Watch every new await/race for who-awaits-whom on early exits.
 
 ---
+
+## Retro — 2026-07-24 — main (audit #2, preview/extraction features)
+
+### Statistics
+- Critical: 2, Important: 8, Minor: 1 (all fixed); 4 discarded with justification
+- Round 2 caught a fix-introduced regression (async-let cancellation stall) — the lean convergence round pays off
+- One fix agent omitted its FIX_RESULT line; git-status cross-check + mandatory verifier covered it
+
+### Pattern worth keeping
+- Timeouts around non-cooperative async APIs (LanguageModelSession.respond): TaskGroup races are NOT wall-clock bounds; continuation race + ResumeOnce + withTaskCancellationHandler is the working pattern (InvoiceExtractor.swift).
 
 ## Retro — 2026-07-24 — main (audit)
 
