@@ -31,6 +31,9 @@ entirely in the menubar.
   fullscreen apps and on every Space. Drop on it and it turns into a live
   status card right there, showing conversion progress and the page preview
   before the save panel appears, instead of just disappearing.
+  Privacy note: drag detection only inspects drag types system-wide, and file
+  URLs are read only for file drags to check for a `.eml` extension; nothing
+  is logged or transmitted.
 
 ## What it does
 

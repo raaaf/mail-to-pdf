@@ -19,7 +19,7 @@ final class StatusItemController {
     init() {
         configureButton()
         configurePopover()
-        observeModelState()
+        model.onStateChange { [weak self] in self?.handleStateChange() }
         dropShelf = DropShelfController(model: model)
     }
 
@@ -27,7 +27,7 @@ final class StatusItemController {
 
     private func configureButton() {
         guard let button = statusItem.button else { return }
-        setIcon(Self.idleSymbol)
+        setIcon(Self.idleSymbol, description: "MailToPDF")
         button.target = self
         button.action = #selector(statusItemClicked)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -52,7 +52,11 @@ final class StatusItemController {
     }
 
     @objc private func statusItemClicked() {
-        if NSApp.currentEvent?.type == .rightMouseUp {
+        let event = NSApp.currentEvent
+        // Control+left-click is the macOS convention for triggering a context menu, alongside
+        // an actual right-click.
+        let isControlClick = event?.type == .leftMouseUp && event?.modifierFlags.contains(.control) == true
+        if event?.type == .rightMouseUp || isControlClick {
             showMenu()
         } else {
             togglePopover()
@@ -98,7 +102,9 @@ final class StatusItemController {
             )
             window.title = "Einstellungen"
             window.isReleasedWhenClosed = false
-            window.contentViewController = NSHostingController(rootView: SettingsView())
+            let hostingController = NSHostingController(rootView: SettingsView())
+            window.contentViewController = hostingController
+            window.setContentSize(hostingController.view.fittingSize)
             window.center()
             settingsWindow = window
         }
@@ -130,41 +136,27 @@ final class StatusItemController {
 
     // MARK: - Status icon feedback
 
-    /// Re-subscribes after every change, since `withObservationTracking` fires its `onChange`
-    /// closure only once per registration. The closure itself runs off the main actor, so hop
-    /// back before touching `self`.
-    private func observeModelState() {
-        withObservationTracking {
-            _ = model.state
-        } onChange: { [weak self] in
-            Task { @MainActor in
-                self?.handleStateChange()
-                self?.observeModelState()
-            }
-        }
-    }
-
     private func handleStateChange() {
         switch model.state {
-        case .done: showTemporaryIcon("checkmark.circle")
-        case .failed: showTemporaryIcon("xmark.circle")
+        case .done: showTemporaryIcon("checkmark.circle", description: "MailToPDF – Gespeichert")
+        case .failed: showTemporaryIcon("xmark.circle", description: "MailToPDF – Fehlgeschlagen")
         default: break
         }
     }
 
     /// Swaps to `symbolName` for ~2s, then back to the idle envelope icon.
-    private func showTemporaryIcon(_ symbolName: String) {
+    private func showTemporaryIcon(_ symbolName: String, description: String) {
         statusIconResetTask?.cancel()
-        setIcon(symbolName)
+        setIcon(symbolName, description: description)
         statusIconResetTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
-            self?.setIcon(Self.idleSymbol)
+            self?.setIcon(Self.idleSymbol, description: "MailToPDF")
         }
     }
 
-    private func setIcon(_ symbolName: String) {
-        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "MailToPDF")
+    private func setIcon(_ symbolName: String, description: String) {
+        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: description)
         image?.isTemplate = true
         statusItem.button?.image = image
     }

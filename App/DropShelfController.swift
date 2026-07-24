@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import QuartzCore
 import SwiftUI
 
 /// Drives the shelf's highlight state from `DropTargetView`'s plain closure callback.
@@ -53,15 +54,21 @@ private struct ShelfContentView: View {
             previewContent(image: preview, pages: pages)
                 .transition(ConvertModel.previewTransition(reduceMotion: reduceMotion))
         case .done(let name):
-            resultContent(systemName: "checkmark.circle.fill", color: .green, title: "Gespeichert", detail: name, bounce: true)
-                .transition(reduceMotion ? .identity : .opacity)
+            if let display = model.state.display {
+                resultContent(systemName: display.symbol, color: display.color, title: display.title, detail: name, bounce: true)
+                    .transition(reduceMotion ? .identity : .opacity)
+            }
         case .cancelled:
-            resultContent(systemName: "minus.circle.fill", color: .secondary, title: "Abgebrochen", detail: nil, bounce: false)
-                .transition(reduceMotion ? .identity : .opacity)
+            if let display = model.state.display {
+                resultContent(systemName: display.symbol, color: display.color, title: display.title, detail: nil, bounce: false)
+                    .transition(reduceMotion ? .identity : .opacity)
+            }
         case .failed(let message):
-            resultContent(systemName: "xmark.circle.fill", color: .red, title: "Fehlgeschlagen", detail: message,
-                          hint: "Klicken zum Schließen", bounce: false)
-                .transition(reduceMotion ? .identity : .opacity)
+            if let display = model.state.display {
+                resultContent(systemName: display.symbol, color: display.color, title: display.title, detail: message,
+                              hint: "Klicken zum Schließen", bounce: false)
+                    .transition(reduceMotion ? .identity : .opacity)
+            }
         }
     }
 
@@ -78,18 +85,24 @@ private struct ShelfContentView: View {
 
     private func convertingContent(name: String) -> some View {
         VStack(spacing: 8) {
-            Image(systemName: "envelope.open")
-                .font(.system(size: 28, weight: .light))
-                .foregroundStyle(Color.accentColor)
-                .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
-            Text("Wird verarbeitet…")
-                .font(.caption.weight(.medium))
+            if let display = model.state.display {
+                Image(systemName: display.symbol)
+                    .font(.system(size: 28, weight: .light))
+                    .foregroundStyle(display.color)
+                    .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
+                Text(display.title)
+                    .font(.caption.weight(.medium))
+            }
             Text(name)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             ProgressView().controlSize(.small)
+            // Mouse-only affordance: the panel is `.nonactivatingPanel`, so it never has key
+            // status for `.keyboardShortcut(.cancelAction)` to reach.
+            Button("Abbrechen") { model.cancel() }
+                .controlSize(.small)
         }
     }
 
@@ -169,11 +182,20 @@ final class DropShelfController {
     private nonisolated(unsafe) var localUpMonitor: Any?
     private var lastSeenChangeCount = -1
     private var hideTask: Task<Void, Never>?
+    /// Allocated once and reused for every `.leftMouseDragged` sample instead of standing up a
+    /// fresh `NSPasteboard` per event, which fires continuously for the duration of a drag.
+    private let dragPasteboard = NSPasteboard(name: .drag)
+    private var fadeTask: Task<Void, Never>?
+    private var fadeState: FadeState = .hidden
+
+    private enum FadeState {
+        case hidden, showing, visible, hiding
+    }
 
     init(model: ConvertModel) {
         self.model = model
         installMonitors()
-        observeModelState()
+        model.onStateChange { [weak self] in self?.handleModelStateChange() }
     }
 
     deinit {
@@ -202,16 +224,20 @@ final class DropShelfController {
     }
 
     private func handleDragged(_ event: NSEvent) {
-        let pasteboard = NSPasteboard(name: .drag)
-        let changeCount = pasteboard.changeCount
+        let changeCount = dragPasteboard.changeCount
         guard changeCount != lastSeenChangeCount else { return }
         lastSeenChangeCount = changeCount
-        guard isRelevantDrag(pasteboard) else { return }
+        guard isRelevantDrag(dragPasteboard) else { return }
         hideTask?.cancel()
         hideTask = nil
         showShelf()
     }
 
+    /// Checked cheapest-first and, for anything but a genuine file URL, stops at type-only
+    /// lookups: `readObjects` decodes and materializes the pasteboard's actual payload (text,
+    /// image data, etc.), and this monitor sees essentially every drag happening anywhere in the
+    /// system, not just ones meant for us. Only a pasteboard that already advertises `.fileURL`
+    /// is worth paying that cost on, to check whether it's specifically an `.eml`.
     private func isRelevantDrag(_ pasteboard: NSPasteboard) -> Bool {
         if pasteboard.types?.contains(DropTargetView.mailMessageTransferType) == true {
             return true
@@ -219,6 +245,7 @@ final class DropShelfController {
         if pasteboard.canReadObject(forClasses: [NSFilePromiseReceiver.self], options: nil) {
             return true
         }
+        guard pasteboard.types?.contains(.fileURL) == true else { return false }
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
             return urls.contains { $0.pathExtension.lowercased() == "eml" }
         }
@@ -228,8 +255,8 @@ final class DropShelfController {
     /// Hides after a short delay, but only if the model is idle by then: a drag that ended without
     /// dropping on the shelf leaves the model idle, so this fires; a drop that's still being
     /// processed (converting/saving/done/failed) is left alone. The same delayed re-check is
-    /// reused by `observeModelState` once processing finishes and the model returns to idle on its
-    /// own, so there is exactly one hide-scheduling implementation for both triggers.
+    /// reused by `handleModelStateChange` once processing finishes and the model returns to idle on
+    /// its own, so there is exactly one hide-scheduling implementation for both triggers.
     private func scheduleHide() {
         hideTask?.cancel()
         hideTask = Task { [weak self] in
@@ -239,24 +266,11 @@ final class DropShelfController {
         }
     }
 
-    /// Re-subscribes after every change, since `withObservationTracking` fires its `onChange`
-    /// closure only once per registration. The closure itself runs off the main actor, so hop
-    /// back before touching `self`. When the model settles back to idle (either the auto-reset
-    /// after done/cancelled, or a tap dismissing a failed card) while the shelf is visible, this
-    /// schedules the same delayed hide as a mouse-up with nothing dropped.
-    private func observeModelState() {
-        withObservationTracking {
-            _ = model.state
-        } onChange: { [weak self] in
-            Task { @MainActor in
-                self?.handleModelStateChange()
-                self?.observeModelState()
-            }
-        }
-    }
-
+    /// When the model settles back to idle (either the auto-reset after done/cancelled, or a tap
+    /// dismissing a failed card) while the shelf is visible, this schedules the same delayed hide
+    /// as a mouse-up with nothing dropped.
     private func handleModelStateChange() {
-        guard panel.isVisible else { return }
+        guard fadeState != .hidden else { return }
         if case .saving = model.state {
             // The centered save dialog presents right after this state is set and takes over as
             // the visible surface, so the shelf's own preview card would just be redundant.
@@ -272,13 +286,30 @@ final class DropShelfController {
     // MARK: - Shelf panel
 
     /// Reuses the existing panel, just repositioning and fading it in. Guards against a redundant
-    /// double-show via `isVisible` rather than `panel == nil`, since the panel is never nilled out.
+    /// double-show via `fadeState` rather than `panel.isVisible`: the panel stays `isVisible` for
+    /// the whole ~150ms fade-out started by `hideShelf`, so a relevant drag arriving in that
+    /// window would otherwise be swallowed here, then still get hidden out from under it once the
+    /// in-flight fade-out's `orderOut` finally runs. Cancelling that fade task before it can reach
+    /// its `orderOut` closes both holes.
     private func showShelf() {
-        guard !panel.isVisible else { return }
+        guard fadeState == .hidden || fadeState == .hiding else { return }
+        let wasHiding = fadeState == .hiding
+        fadeTask?.cancel()
+        fadeTask = nil
+        fadeState = .showing
         position(panel)
-        panel.alphaValue = 0
+        // Only reset to fully transparent when starting from genuinely hidden; a cancelled
+        // fade-out is already partway visible, and snapping it back to 0 first would flash.
+        if !wasHiding {
+            panel.alphaValue = 0
+        }
         panel.orderFrontRegardless()
-        Task { await animateAlpha(of: panel, to: 1) }
+        fadeTask = Task { [weak self] in
+            guard let self else { return }
+            await self.animateAlpha(of: self.panel, to: 1)
+            guard !Task.isCancelled else { return }
+            self.fadeState = .visible
+        }
     }
 
     /// Only fades/orders the panel out; never releases it or its view hierarchy. See the `panel`
@@ -286,14 +317,24 @@ final class DropShelfController {
     private func hideShelf(animated: Bool) {
         hideTask?.cancel()
         hideTask = nil
-        guard panel.isVisible else { return }
+        guard fadeState == .visible || fadeState == .showing else { return }
+        fadeTask?.cancel()
+        fadeTask = nil
         guard animated else {
+            fadeState = .hidden
             panel.orderOut(nil)
             return
         }
-        Task {
-            await animateAlpha(of: panel, to: 0)
-            panel.orderOut(nil)
+        fadeState = .hiding
+        fadeTask = Task { [weak self] in
+            guard let self else { return }
+            await self.animateAlpha(of: self.panel, to: 0)
+            // If `showShelf` cancelled this in the meantime, it has already taken over the
+            // panel (repositioned, re-shown, fading back in); ordering it out here would hide
+            // the shelf out from under that new, still-active drag.
+            guard !Task.isCancelled else { return }
+            self.fadeState = .hidden
+            self.panel.orderOut(nil)
         }
     }
 
@@ -307,6 +348,7 @@ final class DropShelfController {
         }
         await NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.fadeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             panel.animator().alphaValue = value
         }
     }

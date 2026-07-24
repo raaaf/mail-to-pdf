@@ -116,6 +116,7 @@ struct ContentView: View {
                     .padding(.top, 2)
             }
         }
+        .onTapGesture { model.dismissFailure() }
     }
 
     /// The "saving" state: a page-1 thumbnail with a page-count caption. No icon slot and no
@@ -141,38 +142,37 @@ struct ContentView: View {
             Image(systemName: "envelope.arrow.triangle.branch")
                 .foregroundStyle(isTargeted ? Color.accentColor : Color.secondary)
                 .scaleEffect(isTargeted && !reduceMotion ? 1.08 : 1)
-        case .converting, .saving:
+        case .saving:
             Image(systemName: "envelope.open")
                 .foregroundStyle(Color.accentColor)
-                .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion && isConverting)
-        case .done:
-            if reduceMotion {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.green)
-            } else {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(Color.green)
-                    .symbolEffect(.bounce, options: .nonRepeating, value: model.state)
+        case .converting:
+            if let display = model.state.display {
+                Image(systemName: display.symbol)
+                    .foregroundStyle(display.color)
+                    .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
             }
-        case .failed:
-            Image(systemName: "xmark.circle.fill").foregroundStyle(Color.red)
-        case .cancelled:
-            Image(systemName: "minus.circle.fill").foregroundStyle(Color.secondary)
+        case .done:
+            if let display = model.state.display {
+                if reduceMotion {
+                    Image(systemName: display.symbol).foregroundStyle(display.color)
+                } else {
+                    Image(systemName: display.symbol)
+                        .foregroundStyle(display.color)
+                        .symbolEffect(.bounce, options: .nonRepeating, value: model.state)
+                }
+            }
+        case .failed, .cancelled:
+            if let display = model.state.display {
+                Image(systemName: display.symbol).foregroundStyle(display.color)
+            }
         }
-    }
-
-    private var isConverting: Bool {
-        if case .converting = model.state { return true }
-        return false
     }
 
     private var title: String {
         switch model.state {
         case .idle: "E-Mail hierher ziehen"
-        case .converting: "Wird verarbeitet…"
         case .saving: "Wird gespeichert…"
-        case .done: "Gespeichert"
-        case .failed: "Fehlgeschlagen"
-        case .cancelled: "Abgebrochen"
+        case .converting, .done, .failed, .cancelled: model.state.display?.title ?? ""
         }
     }
 
@@ -212,7 +212,7 @@ struct ContentView: View {
         case .converting: "Verarbeitung läuft"
         case .saving(_, let pages): "Vorschau bereit, \(pages) Seiten, Speichern-Dialog geöffnet"
         case .done: "Erfolgreich gespeichert"
-        case .failed(let message): message
+        case .failed(let message): "\(message). Klicken zum Schließen"
         case .cancelled: "Abgebrochen"
         }
     }

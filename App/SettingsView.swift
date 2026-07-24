@@ -18,6 +18,7 @@ struct SettingsView: View {
                 get: { loginItems.isEnabled },
                 set: { loginItems.setEnabled($0) }
             ))
+            .accessibilityHint("Funktioniert zuverlässig, wenn die App im Programme-Ordner liegt.")
             Text("Funktioniert zuverlässig, wenn die App im Programme-Ordner liegt.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -28,6 +29,7 @@ struct SettingsView: View {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .frame(width: 64, height: 64)
+                .accessibilityHidden(true)
             Text("MailToPDF")
                 .font(.title3.weight(.semibold))
             Text(versionString)
@@ -41,5 +43,8 @@ struct SettingsView: View {
         }
         .padding(24)
         .frame(width: 300, height: 320)
+        // Escape closes the window; this is the only keyboard close path since LSUIElement apps
+        // show no menu bar to hang a Close item off directly.
+        .onExitCommand { NSApp.keyWindow?.close() }
     }
 }

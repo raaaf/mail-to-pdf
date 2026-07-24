@@ -31,6 +31,24 @@ final class ConvertModel {
                 return false
             }
         }
+
+        /// Icon/color/title for the states that render as a simple result card. `nil` for
+        /// `.idle` and `.saving`, which the views render themselves (drop prompt / preview card).
+        struct Display {
+            let symbol: String
+            let color: Color
+            let title: String
+        }
+
+        var display: Display? {
+            switch self {
+            case .converting: Display(symbol: "envelope.open", color: .accentColor, title: "Wird verarbeitet…")
+            case .done: Display(symbol: "checkmark.circle.fill", color: .green, title: "Gespeichert")
+            case .cancelled: Display(symbol: "minus.circle.fill", color: .secondary, title: "Abgebrochen")
+            case .failed: Display(symbol: "xmark.circle.fill", color: .red, title: "Fehlgeschlagen")
+            case .idle, .saving: nil
+            }
+        }
     }
 
     var state: State = .idle
@@ -51,6 +69,20 @@ final class ConvertModel {
     /// card to dismiss it. A no-op in any other state.
     func dismissFailure() {
         if case .failed = state { state = .idle }
+    }
+
+    /// Re-subscribes after every change, since `withObservationTracking` fires its `onChange`
+    /// closure only once per registration. Fires once per state change; `action` runs on the
+    /// MainActor.
+    func onStateChange(perform action: @escaping @MainActor () -> Void) {
+        withObservationTracking {
+            _ = state
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                action()
+                self?.onStateChange(perform: action)
+            }
+        }
     }
 
     /// Shows "converting" feedback the instant a drop is accepted, before `handle(_:)` even runs:
