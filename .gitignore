@@ -1,0 +1,9 @@
+# Build artifacts
+.build/
+DerivedData/
+
+# Generated Xcode project (from project.yml via xcodegen)
+*.xcodeproj
+
+# macOS
+.DS_Store

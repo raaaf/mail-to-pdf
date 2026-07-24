@@ -1,0 +1,84 @@
+# MailToPDF
+
+A small native macOS app for turning emails into PDFs. Drag a message out of
+Apple Mail, or drop a `.eml` file from Finder, and get a paginated A4 PDF back.
+Any PDF attachments on the email are extracted and saved alongside it. Built
+for bookkeeping: converting invoices and receipts that arrive by email into
+files you can archive.
+
+## What it does
+
+- Accepts a dragged Mail.app message or a `.eml` file (drag-and-drop, or a
+  file picker).
+- Parses the MIME structure (headers, multipart bodies, charsets, transfer
+  encodings) with a small hand-rolled parser, no third-party dependencies.
+- Renders the HTML body (or a plain-text fallback) into a paginated A4 PDF,
+  with a small header block (From, Subject, Date) prepended.
+- Extracts any `application/pdf` attachments and writes them next to the
+  saved email PDF.
+- Asks where to save via a standard save panel, once per dropped email.
+
+## Requirements
+
+- macOS 15 or later
+- Xcode (recent enough for Swift 6 / macOS 15 SDK)
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
+
+## Building
+
+The Xcode project itself is generated, not checked in.
+
+```sh
+xcodegen generate
+open MailToPDF.xcodeproj
+```
+
+Or build from the command line:
+
+```sh
+xcodegen generate
+xcodebuild -project MailToPDF.xcodeproj -scheme MailToPDF build -destination 'platform=macOS'
+```
+
+## Testing
+
+```sh
+xcodebuild -project MailToPDF.xcodeproj -scheme MailToPDF test -destination 'platform=macOS'
+```
+
+Tests cover the MIME parser (`EmailParser`): header decoding (RFC 2047),
+multipart recursion, quoted-printable/base64 transfer decoding, charset
+handling, date parsing, and PDF attachment extraction. The PDF rendering
+pipeline itself (WKWebView + NSPrintOperation) is not unit-testable headlessly
+and is verified by building and by manual testing.
+
+## How the Mail drag works
+
+Modern Mail.app no longer puts a file promise on the drag pasteboard, only a
+custom `com.apple.mail.PasteboardTypeMessageTransfer` type. To read the
+dragged message(s), the app asks Mail for the raw source of the current
+selection via AppleScript (`NSAppleScript`, not `osascript`, so the macOS
+automation prompt attributes correctly to this app). A drag always carries
+the selected message(s), so dragging several selected messages converts all
+of them.
+
+The first drag from Mail triggers a one-time macOS Automation permission
+prompt ("MailToPDF wants access to control Mail"). This has to be granted for
+the Mail drag path to work; it can be managed later under System Settings >
+Privacy & Security > Automation.
+
+Dropping a `.eml` file from Finder, or a file promise from another app that
+still provides one, does not require this permission and works as a
+fallback path.
+
+## Limitations
+
+- The save location is asked for on every drop; there is no "always save to
+  this folder" setting.
+- Only `application/pdf` attachments are extracted; other attachment types
+  (images, Word documents, etc.) are ignored.
+- No support for `.msg` (Outlook) or other non-MIME email formats.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

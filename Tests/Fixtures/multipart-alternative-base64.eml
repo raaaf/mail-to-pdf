@@ -1,0 +1,21 @@
+From: Team Newsletter <news@example.de>
+To: Empfaenger <empfaenger@example.de>
+Subject: Wochenrueckblick
+Date: Tue, 15 Aug 2023 09:30:00 +0200
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="ALT_BOUNDARY_1"
+
+--ALT_BOUNDARY_1
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hallo, dies ist die Text-Alternative.
+
+--ALT_BOUNDARY_1
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+PHA+SGFsbG8gPGI+V2VsdDwvYj4sIGRpZXMgaXN0IGRpZSBIVE1MLUFsdGVy
+bmF0aXZlLjwvcD48L2JvZHk+PC9odG1sPg==
+
+--ALT_BOUNDARY_1--

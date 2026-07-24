@@ -1,0 +1,32 @@
+From: Buchhaltung <rechnung@example.de>
+To: Empfaenger <empfaenger@example.de>
+Subject: Ihre Rechnung
+Date: Thu, 17 Aug 2023 08:00:00 +0200
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="MIXED_BOUNDARY_1"
+
+--MIXED_BOUNDARY_1
+Content-Type: multipart/alternative; boundary="ALT_BOUNDARY_2"
+
+--ALT_BOUNDARY_2
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Anbei die Rechnung als PDF-Anhang.
+
+--ALT_BOUNDARY_2
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+PHA+QW5iZWkgZGllIFJlY2hudW5nIGFscyBQREYtQW5oYW5nLjwvcD48L2Jv
+ZHk+PC9odG1sPg==
+
+--ALT_BOUNDARY_2--
+--MIXED_BOUNDARY_1
+Content-Type: application/pdf; name="Rechnung.pdf"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="Rechnung.pdf"
+
+JVBERi0xLjQKMSAwIG9iajw8Pj5lbmRvYmoKdHJhaWxlcjw8Pj4KJSVFT0Y=
+
+--MIXED_BOUNDARY_1--
